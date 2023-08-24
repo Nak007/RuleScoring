@@ -2,6 +2,7 @@
 Available methods are the followings:
 [1] RulebasedWOE
 [2] FeatureScore
+[3] PlotScore
 
 Authors: Danusorn Sitdhirasdr <danusorn.si@gmail.com>
 versionadded:: 30-08-2023
@@ -11,6 +12,7 @@ import pandas as pd, numpy as np, os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.dates as mdates
+from matplotlib.ticker import FixedLocator
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import (StandardScaler,
                                    minmax_scale)
@@ -18,9 +20,12 @@ from sklearn.base import clone
 from sklearn.utils.estimator_checks import check_estimator
 from sklearn.metrics import (confusion_matrix, 
                              precision_score,
-                             recall_score, f1_score)
+                             recall_score, f1_score, 
+                             precision_recall_curve)
 
-__all__ = ["RulebasedWOE" , "FeatureScore"]
+__all__ = ["RulebasedWOE" , 
+           "FeatureScore",
+           "PlotScore"]
 
 class ValidateParams:
     
@@ -195,10 +200,10 @@ class RulebasedWOE(ValidateParams, BinaryData):
     factor : int, default=1
         WOE multiplier.
         
-    min_woe : float, defaut=-1e5
+    min_woe : float, defaut=-20
         Minimum value of WOE after applying `factor`.
         
-    max_woe : float, default=1e5
+    max_woe : float, default=20
         Maximum value of WOE after applying `factor`
         
     Attributes
@@ -208,7 +213,7 @@ class RulebasedWOE(ValidateParams, BinaryData):
         values.
     '''
     def __init__(self, decimal=8, factor=1, 
-                 min_woe=-1e5, max_woe=1e5):
+                 min_woe=-20., max_woe=20.):
         
         # Validate parameters
         args0 = (int, 0, None, "left")
@@ -321,11 +326,11 @@ class FeatureScore(ValidateParams, BinaryData):
         `estimator`, otherwise `X` remains unchanged and `woe` 
         defaults to 1.
         
-    min_woe : float, defaut=-1e5
+    min_woe : float, defaut=-20
         Minimum value of Weight-of-Evidence. This is relevant when 
         `use_woe` is True.
         
-    max_woe : float, default=1e5
+    max_woe : float, default=20
         Maximum value of Weight-of-Evidence. This is relevant when 
         `use_woe` is True.
     
@@ -334,10 +339,10 @@ class FeatureScore(ValidateParams, BinaryData):
         This is applied to `scores` (attribute).
     
     min_score : float, default=0.
-        Minimum score.
+        Minimum feature score.
         
     max_score : float, default=100.
-        Maximum score.
+        Maximum feature score.
         
     estimator : estimator object, default=None
         A sklearn LogisticRegression with initial parameters set. If 
@@ -359,7 +364,7 @@ class FeatureScore(ValidateParams, BinaryData):
     
     '''
   
-    def __init__(self, use_woe=False, min_woe=-1e5, max_woe=1e5, 
+    def __init__(self, use_woe=False, min_woe=-20., max_woe=20., 
                  decimal=0, min_score=0., max_score=100., 
                  estimator=None):
         
@@ -377,18 +382,18 @@ class FeatureScore(ValidateParams, BinaryData):
         args = [([True, False], bool), 
                 (float, None, None, "both"),
                 (int, 0, None, "left")]
-        self.use_woe = super().StrOptions('use_woe', use_woe, *args[0])
-        self.min_woe = super().Interval("min_woe", min_woe, *args[1])
-        self.max_woe = super().Interval("max_woe", max_woe, *args[1])
-        super().check_range(("min_woe", self.min_woe),
-                            ("max_woe", self.max_woe))
+        self.use_woe = self.StrOptions('use_woe', use_woe, *args[0])
+        self.min_woe = self.Interval("min_woe", min_woe, *args[1])
+        self.max_woe = self.Interval("max_woe", max_woe, *args[1])
+        self.check_range(("min_woe", self.min_woe),
+                         ("max_woe", self.max_woe))
   
         # Validate other parameters
-        self.decimal = super().Interval("decimal", decimal, *args[2])
-        self.min_score = super().Interval("min_score", min_score, float)
-        self.max_score = super().Interval("max_score", max_score, float)
-        super().check_range(("min_score", self.min_score),
-                            ("max_score", self.max_score))
+        self.decimal = self.Interval("decimal", decimal, *args[2])
+        self.min_score = self.Interval("min_score", min_score, float)
+        self.max_score = self.Interval("max_score", max_score, float)
+        self.check_range(("min_score", self.min_score),
+                         ("max_score", self.max_score))
             
     def fit(self, X, y, sample_weight=None):
         
@@ -435,7 +440,7 @@ class FeatureScore(ValidateParams, BinaryData):
     
         # Initial raw scores (for calibration)
         init_scores = np.full(X.shape, self.raw_scores.reshape(1,-1))
-        init_scores = np.array(super().convert(X)) * init_scores
+        init_scores = np.array(self.convert(X)) * init_scores
         init_scores = init_scores.sum(1, keepdims=True)
         
         # Calibrate scores
@@ -477,10 +482,10 @@ class FeatureScore(ValidateParams, BinaryData):
                              f"fitted yet. Call `fit` with appropriate "
                              f"arguments before using this estimator.")
             
-        super().check_columns(X)
+        self.check_columns(X)
         scores = [self.scores[key] for key in self.columns]
         scores = np.full(X.shape, scores)
-        scores = super().convert(X)[self.columns].values * scores
+        scores = self.convert(X)[self.columns].values * scores
         return scores.sum(1)
     
     def fit_transform(self, X, y, sample_weight=None):
@@ -509,3 +514,346 @@ class FeatureScore(ValidateParams, BinaryData):
         '''
         self.fit(X, y, sample_weight=None)
         return self.transform(X)
+
+class SetProperties:
+    
+    def __majorlocator__(self):
+        
+        '''set major locator both x and y'''
+        # Set y-axis limit
+        y_min, y_max = self.ax.get_ylim()
+        self.ax.set_ylim(y_min, y_max/0.9)
+        
+        # Number of ticks
+        t = min(int(self.bins/1.5), 12)
+        self.ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(t))
+        self.ax.yaxis.set_major_locator(mpl.ticker.MaxNLocator(6))
+        
+        # Tick label font size
+        self.ax.tick_params(axis='x', labelsize=11)
+        self.ax.tick_params(axis='y', labelsize=11)
+    
+    def __prop__(self, ylabel:str=None, xlabel:str=None, title:str=None):
+        
+        '''set label for both axes as well as title'''
+        kwds = dict(fontsize=12)
+        self.ax.set_xlabel(xlabel, **kwds)
+        self.ax.set_ylabel(ylabel, **kwds)
+        self.ax.set_title(title, **kwds)
+        self.__majorlocator__()
+        self.__spines__()
+        
+    def __spines__(self):
+        
+        '''set spines'''
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        
+    def __legend__(self):
+        
+        '''set legend'''
+        self.ax.legend(loc="best", edgecolor="grey", ncol=1,
+                       borderaxespad=0.2, markerscale=1., 
+                       columnspacing=0.5, labelspacing=0.4, 
+                       handletextpad=0.2, fontsize=11,
+                       handlelength=1)
+        
+    def __axvline__(self, score, label=None):
+        
+        '''draw vertical line'''
+        kwds  = dict(lw=1, ls="--", color="grey", label=label)
+        self.ax.axvline(score, **kwds)
+        self.ax.xaxis.set_minor_locator(FixedLocator([score]))
+        self.ax.tick_params(axis="x", which="minor", length=3, color="k")
+        
+    def __axhline__(self, score, label=None):
+        
+        '''draw horizontal line'''
+        kwds  = dict(lw=1, ls="--", color="grey", label=label)
+        self.ax.axhline(score, **kwds)
+        self.ax.yaxis.set_minor_locator(FixedLocator([score]))
+        self.ax.tick_params(axis="y", which="minor", length=3, color="k")
+        
+    def check_axis(self, ax):
+        
+        '''check whether the object is matplotlib.axes'''
+        if ax is not None:
+            if not isinstance(ax, mpl.axes.Axes):
+                raise ValueError(f"`ax` must be matplotlib axis. "
+                                 f"Got {type(ax)} instead.")
+            else: self.ax = ax
+        else: self.ax = plt.subplots(figsize=(6,4))[1]
+
+class CalculateParams:
+    
+    def __bins__(self):
+        
+        '''
+        Create bin-edges, width, and x.
+        
+        Parameters
+        ----------
+        self.y_score : ndarray (attribute)
+        self.bins : int (attribute)
+        
+        Attributes
+        ----------
+        bin_edges : ndarray
+        width : float
+        x : ndarray
+        '''
+        start, stop = np.percentile(self.y_score, q=[0,100])
+        stop += np.finfo(float).eps
+        self.bin_edges = np.linspace(start, stop, self.bins + 1)
+        self.width = np.diff(self.bin_edges)[0] * 0.8
+        self.x = self.bin_edges[:-1] + np.diff(self.bin_edges)/2
+    
+    def __scores__(self):
+        
+        '''
+        Calculate precision, recall, and f1 for all thresholds.
+        
+        Attributes
+        ----------
+        precision : ndarray of shape (n_thresholds+1,)
+        recall : ndarray of shape (n_thresholds+1,)
+        f1 : ndarray of shape (n_thresholds+1,)
+        threshold : ndarray (n_uniques,)
+        '''
+        # Caluclate precision and recall
+        self.precision, self.recall, self.threshold = \
+        precision_recall_curve(self.y_true, self.y_score)
+        
+        # Calcuate F1-Score
+        numer = 2 * self.precision * self.recall
+        denom = self.precision + self.recall
+        self.f1 = numer/np.where(denom==0,1,denom)
+        
+    def __cutoff__(self, cutoff:float=None, metric:str="f1", threshold:float=0.5):
+        
+        '''
+        If `cutoff` is None, it defines a new cutoff given metric and 
+        its corresponding threshold, otherwise it uses cutoff to 
+        determine other components i.e. precision, recall, and f1-score.
+        
+        Attributes
+        ----------
+        components : dict, keys={"precision","recall","f1","threshold"}
+        pct : dict, keys={"0","1","all"}
+        '''
+        # Determine index of cutoff
+        if cutoff is not None: 
+            t = np.clip(cutoff, min(self.y_score), max(self.y_score))
+            n = sum(self.threshold<=t) - 1  
+        else: 
+            t = threshold - getattr(self, metric, 0.)
+            n = np.argmin(np.where(t < 0, np.inf, t))
+
+        self.components = {"precision" : self.precision[n],
+                           "recall"    : self.recall[n],
+                           "f1"        : self.f1[n],
+                           "threshold" : self.threshold[n]}
+        
+        self.pct = dict()
+        for k,c in dict([("0",0),("1",1),("all",[0,1])]).items():            
+            # % that makes the cutoff
+            t = np.isin(self.y_true, c)
+            p = sum((self.y_score>self.threshold[n]) & t)/sum(t)  
+            self.pct[k] = p
+            
+    def __cumsum__(self):
+        
+        '''
+        Calculate cumulative sum of samples
+        
+        Attributes
+        ----------
+        cumsum : dict
+        '''
+        self.cumsum = dict()
+        for k,c in dict([("0",0),("1",1),("all",[0,1])]).items():
+            # Last bin includes remaining scores
+            t = np.isin(self.y_true, c)
+            bins = np.r_[self.threshold, np.inf]
+            hist = np.histogram(self.y_score[t], bins=bins)[0]
+            cums = (np.cumsum(hist[::-1])/sum(t))[::-1]
+            self.cumsum[k] = {"sum":cums}
+            
+    def __getparams__(self):
+        
+        '''create all parameters'''
+        self.__bins__()
+        self.__scores__()
+        self.__cumsum__()
+        
+    def __validate__(self, cutoff, metric, threshold):
+        
+        '''validate parameters'''
+        _ = self.StrOptions('metric', metric, ["f1","precision","recall"], str)
+        _ = self.Interval("threshold", threshold, float, 0., 1., "both")
+        if cutoff is not None: _ = self.Interval("cutoff", cutoff, float)
+
+class PlotScore(ValidateParams, SetProperties, CalculateParams):
+    
+    '''
+    Plotting class
+    
+    Parameters
+    ----------
+    y_true : array-like of shape (n_samples,)
+        Binary label indicators. 
+    
+    y_score : array-like of shape (n_samples,)
+        Target scores.
+    
+    bins : int, default=20
+        The number of equal-width bins.
+        
+    colors : list of 3 hex-colors, default=None
+        If None, it defaults to ["#008BFB", "#FF0051", "#7E7E7E"].
+    
+    '''
+    def __init__(self, y_true, y_score, bins=20, colors=None):
+        
+        self.bins = self.Interval("bins", bins, int, 2, None, "left")
+        if colors is None: self.colors = ["#008BFB","#FF0051","#7E7E7E"]
+        self.y_true  = y_true
+        self.y_score = y_score
+        self.__getparams__()
+
+    def hist(self, label=2, ax=None):
+        
+        '''
+        Plot histogram
+        
+        Parameters
+        ----------
+        label : {0, 1, 2}, default=2
+            Label of selected class. If 2, all classes is selected.
+            
+        ax : axis object, default=None
+            If None, it creates an axis with figsize of (6,4).
+            
+        Returns
+        -------
+        ax : axis object
+        '''
+        # Validate all parameters
+        label = self.Interval("label", label, int, 0, 2, "both")
+        self.check_axis(ax)
+        
+        # Plot histogram
+        groups = dict([(0,[0]),(1,[1]),(2,[0,1])])
+        scores = self.y_score[np.isin(self.y_true, groups[label])]
+        height = np.histogram(scores, self.bin_edges)[0]
+        kwds = dict(width=self.width, align="center", 
+                    color=self.colors[label])
+        self.ax.bar(self.x, height/sum(height), **kwds)
+        
+        k = ",".join(np.r_[groups[label]].astype(str))
+        title = (f"N({k}) = {(n:=len(scores)):,.0f} "
+                 f"({n/len(self.y_true)*100:.3g}%)")
+        self.__prop__("Density", "Estimator score", title)
+        
+        return self.ax
+        
+    def score(self, cutoff=None, metric="f1", threshold=0.5, ax=None):
+        
+        '''
+        Plot scores i.e. precision, recall, and f1.
+        
+        Parameters
+        ----------
+        cutoff : float, default=None
+            The score cutoff. Any sample whose score is greater than
+            `cutoff` is selected.
+            
+        metric : {"f1", "precision", "recall"}, default="f1"
+            Specify metric to evaluate the performance. This is relevant
+            when `cutoff` is not defined.
+        
+        threshold : float, default=0.5
+            A threshold of defined metric. This is relevant when `cutoff`
+            is not defined.
+      
+        ax : axis object, default=None
+            If None, it creates an axis with figsize of (6,4).
+            
+        Returns
+        -------
+        ax : axis object
+        '''        
+        # Validate all parameters
+        self.check_axis(ax)
+        self.__validate__(cutoff, metric, threshold)
+        self.__cutoff__(cutoff, metric, threshold)
+        
+        # Plot scores i.e. precision, recall, and f1
+        score = self.components["threshold"]
+        for n,key in enumerate(self.components.keys()):
+            if key!="threshold":
+                args = (key[0].upper()+key[1:], self.components[key])
+                self.ax.plot(self.threshold, getattr(self, key)[:-1], 
+                             lw=2, color=self.colors[n])
+                self.ax.scatter([score], [self.components[key]], s=25,  
+                                marker="o", color=self.colors[n], 
+                                label= "{} ({:,.0%})".format(*args))
+            else:
+                label =  r"Threshold > {:,.0f}".format(score)
+                self.__axvline__(score, label)
+                
+        self.__prop__("Score", "Estimator score")
+        self.__legend__()
+        
+        return self.ax
+    
+    def cumulative(self, cutoff=None, metric="f1", threshold=0.5, ax=None):
+        
+        '''
+        Plot scores i.e. precision, recall, and f1.
+        
+        Parameters
+        ----------
+        cutoff : float, default=None
+            The score cutoff. Any sample whose score is greater than
+            `cutoff` is selected.
+            
+        metric : {"f1", "precision", "recall"}, default="f1"
+            Specify metric to evaluate the performance. This is relevant
+            when `cutoff` is not defined.
+        
+        threshold : float, default=0.5
+            A threshold of defined metric. This is relevant when `cutoff`
+            is not defined.
+      
+        ax : axis object, default=None
+            If None, it creates an axis with figsize of (6,4).
+            
+        Returns
+        -------
+        ax : axis object
+        '''
+        # Validate all parameters
+        self.check_axis(ax)
+        self.__validate__(cutoff, metric, threshold)
+        self.__cutoff__(cutoff, metric, threshold)
+        
+        # Plot cumulative number of respective classes
+        score = self.components["threshold"]
+        groups = dict([("0","N(0)"),("1","N(1)"),("all","N(0,1)")])
+        for n,(key,value) in enumerate(self.cumsum.items()):
+            label = f"{groups[key]} ({self.pct[key]*100:.3g}%)" 
+            self.ax.plot(self.threshold, self.cumsum[key]["sum"], 
+                         lw=2, color=self.colors[n])
+            self.ax.scatter([score], [self.pct[key]], s=25,  
+                            marker="o", label=label, 
+                            color=self.colors[n])
+
+        delta = (self.pct["all"]-1)*100
+        title = f"N = {delta+100:.3g}%, $\Delta$ = {delta:-.3g}%"
+        label =  r"Threshold > {:,.0f}".format(score)
+        self.__prop__("Cumulative Density", "Estimator score", title)
+        self.__axvline__(score, label)
+        self.__legend__()
+        
+        return self.ax
