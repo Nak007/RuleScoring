@@ -646,7 +646,7 @@ class CalculateParams:
             t = np.clip(cutoff, min(self.y_score), max(self.y_score))
             n = sum(self.threshold<=t) - 1  
         else: 
-            t = threshold - getattr(self, metric, 0.)
+            t = threshold - getattr(self, metric, 0.)[:-1]
             n = np.argmin(np.where(t < 0, np.inf, t))
 
         self.components = {"precision" : self.precision[n],
@@ -807,7 +807,8 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
         
         return self.ax
     
-    def cumulative(self, cutoff=None, metric="f1", threshold=0.5, ax=None):
+    def cumulative(self, cutoff=None, metric="f1", threshold=0.5, 
+                   ax=None, show_metric=True):
         
         '''
         Plot scores i.e. precision, recall, and f1.
@@ -829,6 +830,9 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
         ax : axis object, default=None
             If None, it creates an axis with figsize of (6,4).
             
+        show_metric : bool, default=True
+            If True, it displays `metric` in the background.
+            
         Returns
         -------
         ax : axis object
@@ -848,10 +852,19 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
             self.ax.scatter([score], [self.pct[key]], s=25,  
                             marker="o", label=label, 
                             color=self.colors[n])
+        # Show metric
+        if show_metric:
+            args = (metric[0].upper()+metric[1:], 
+                    self.components[metric])
+            self.ax.plot(self.threshold, getattr(self, metric)[:-1], 
+                         lw=1, ls="-", color="#bdc3c7", zorder=-1)
+            self.ax.scatter([score], [self.components[metric]], 
+                            s=25, marker="o", color="#bdc3c7", 
+                            label= "{} ({:,.0%})".format(*args))
 
         delta = (self.pct["all"]-1)*100
         title = f"N = {delta+100:.3g}%, $\Delta$ = {delta:-.3g}%"
-        label =  r"Threshold > {:,.0f}".format(score)
+        label =  r"Estimator score > {:,.0f}".format(score)
         self.__prop__("Cumulative Density", "Estimator score", title)
         self.__axvline__(score, label)
         self.__legend__()
