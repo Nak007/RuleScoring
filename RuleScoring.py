@@ -583,6 +583,14 @@ class SetProperties:
                                  f"Got {type(ax)} instead.")
             else: self.ax = ax
         else: self.ax = plt.subplots(figsize=(6,4))[1]
+            
+    def __label__(self, metric, p):
+        
+        '''percentage display'''
+        # Greater than 0% but less than 0.1%
+        if 0<p<0.001: pct = "~0%"
+        else: pct = f"{p*100:.3g}%"
+        return "{} ({})".format(metric, pct)
 
 class CalculateParams:
     
@@ -711,7 +719,6 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
         
     colors : list of 3 hex-colors, default=None
         If None, it defaults to ["#008BFB", "#FF0051", "#7E7E7E"].
-    
     '''
     def __init__(self, y_true, y_score, bins=20, colors=None):
         
@@ -797,9 +804,9 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
                              lw=2, color=self.colors[n])
                 self.ax.scatter([score], [self.components[key]], s=25,  
                                 marker="o", color=self.colors[n], 
-                                label= "{} ({:,.0%})".format(*args))
+                                label=self.__label__(*args))
             else:
-                label =  r"Threshold > {:,.0f}".format(score)
+                label =  r"Estimator score > {:,.4g}".format(score)
                 self.__axvline__(score, label)
                 
         self.__prop__("Score", "Estimator score")
@@ -841,7 +848,9 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
         self.check_axis(ax)
         self.__validate__(cutoff, metric, threshold)
         self.__cutoff__(cutoff, metric, threshold)
-        
+        show_metric = self.StrOptions('show_metric', show_metric, 
+                                      [True, False], bool)
+
         # Plot cumulative number of respective classes
         score = self.components["threshold"]
         groups = dict([("0","N(0)"),("1","N(1)"),("all","N(0,1)")])
@@ -860,11 +869,11 @@ class PlotScore(ValidateParams, SetProperties, CalculateParams):
                          lw=1, ls="-", color="#bdc3c7", zorder=-1)
             self.ax.scatter([score], [self.components[metric]], 
                             s=25, marker="o", color="#bdc3c7", 
-                            label= "{} ({:,.0%})".format(*args))
+                            label=self.__label__(*args))
 
         delta = (self.pct["all"]-1)*100
         title = f"N = {delta+100:.3g}%, $\Delta$ = {delta:-.3g}%"
-        label =  r"Estimator score > {:,.0f}".format(score)
+        label =  r"Estimator score > {:,.4g}".format(score)
         self.__prop__("Cumulative Density", "Estimator score", title)
         self.__axvline__(score, label)
         self.__legend__()
